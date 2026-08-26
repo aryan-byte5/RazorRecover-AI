@@ -1,0 +1,323 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String       @id @default(cuid()) @db.VarChar(191)
+  email         String       @unique @db.VarChar(191)
+  name          String       @db.VarChar(255)
+  passwordHash  String       @db.VarChar(255)
+  avatarUrl     String?      @db.VarChar(512)
+  role          String       @default("ADMIN") @db.VarChar(50) // ADMIN, MEMBER, VIEWER
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  memberships   Membership[]
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+model Workspace {
+  id            String             @id @default(cuid()) @db.VarChar(191)
+  name          String             @db.VarChar(255)
+  slug          String             @unique @db.VarChar(191)
+  currency      String             @default("INR") @db.VarChar(10)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  memberships   Membership[]
+  customers     Customer[]
+  transactions  Transaction[]
+  recoveryCases RecoveryCase[]
+  experiments   Experiment[]
+  auditLogs     AuditLog[]
+  webhookEvents WebhookEvent[]
+  apiKeys       ApiKey[]
+  settings      WorkspaceSettings?
+
+  @@map("workspaces")
+}
+
+model Membership {
+  id          String    @id @default(cuid()) @db.VarChar(191)
+  userId      String    @db.VarChar(191)
+  workspaceId String    @db.VarChar(191)
+  role        String    @default("ADMIN") @db.VarChar(50)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+
+  @@unique([userId, workspaceId])
+  @@map("memberships")
+}
+
+model Customer {
+  id              String          @id @default(cuid()) @db.VarChar(191)
+  workspaceId     String          @db.VarChar(191)
+  externalId      String?         @db.VarChar(191)
+  name            String          @db.VarChar(255)
+  email           String          @db.VarChar(191)
+  phone           String?         @db.VarChar(50)
+  riskProfile     String          @default("LOW") @db.VarChar(50) // LOW, MEDIUM, HIGH, VIP
+  lifetimeValue   Float           @default(0)
+  totalPayments   Int             @default(0)
+  successCount    Int             @default(0)
+  failureCount    Int             @default(0)
+  preferredMethod String?         @db.VarChar(50) // UPI, CARD, NETBANKING
+  preferredVpa    String?         @db.VarChar(191)
+  contactConsent  Boolean         @default(true)
+  lastContactedAt DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  transactions    Transaction[]
+  paymentMethods  PaymentMethod[]
+  recoveryCases   RecoveryCase[]
+
+  @@index([workspaceId, email])
+  @@map("customers")
+}
+
+model PaymentMethod {
+  id          String   @id @default(cuid()) @db.VarChar(191)
+  customerId  String   @db.VarChar(191)
+  type        String   @db.VarChar(50) // UPI, CARD, NETBANKING, WALLET
+  network     String?  @db.VarChar(50) // VISA, MASTERCARD, RUPAY
+  last4       String?  @db.VarChar(10)
+  issuerBank  String?  @db.VarChar(50) // HDFC, SBI, ICICI, AXIS
+  vpaHandle   String?  @db.VarChar(191) // @okhdfcbank, @paytm, @okaxis
+  isDefault   Boolean  @default(false)
+  successRate Float    @default(0.85)
+  createdAt   DateTime @default(now())
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("payment_methods")
+}
+
+model Transaction {
+  id               String         @id @default(cuid()) @db.VarChar(191)
+  workspaceId      String         @db.VarChar(191)
+  customerId       String         @db.VarChar(191)
+  externalId       String?        @db.VarChar(191)
+  orderId          String?        @db.VarChar(191)
+  amount           Float
+  currency         String         @default("INR") @db.VarChar(10)
+  status           String         @db.VarChar(50) // SUCCESS, FAILED, PENDING, RECOVERED
+  paymentMethod    String         @db.VarChar(50) // UPI, CARD, NETBANKING
+  vpa              String?        @db.VarChar(191)
+  cardNetwork      String?        @db.VarChar(50)
+  cardLast4        String?        @db.VarChar(10)
+  bankCode         String?        @db.VarChar(50)
+  errorCode        String?        @db.VarChar(100)
+  errorDescription String?        @db.Text
+  failureCategory  String?        @db.VarChar(100)
+  retryCount       Int            @default(0)
+  recoveryStatus   String         @default("NONE") @db.VarChar(50)
+  recoveredAt      DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  workspace        Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer         Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  recoveryCases    RecoveryCase[]
+  auditLogs        AuditLog[]
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, recoveryStatus])
+  @@map("transactions")
+}
+
+model RecoveryCase {
+  id                  String           @id @default(cuid()) @db.VarChar(191)
+  workspaceId         String           @db.VarChar(191)
+  transactionId       String           @db.VarChar(191)
+  customerId          String           @db.VarChar(191)
+  status              String           @default("QUEUED") @db.VarChar(50)
+  priority            String           @default("MEDIUM") @db.VarChar(50)
+  riskScore           Float            @default(0.2)
+  recoveryProbability Float            @default(0.5)
+  expectedRecovery    Float            @default(0.0)
+  failureRootCause    String?          @db.Text
+  assignedStrategy    String?          @db.VarChar(100)
+  maxAttempts         Int              @default(3)
+  attemptCount        Int              @default(0)
+  lastAttemptAt       DateTime?
+  resolvedAt          DateTime?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  workspace           Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  transaction         Transaction      @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  customer            Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  aiDecisions         AIDecision[]
+  actions             RecoveryAction[]
+  outcomes            RecoveryOutcome[]
+
+  @@index([workspaceId, status])
+  @@map("recovery_cases")
+}
+
+model AIDecision {
+  id                  String        @id @default(cuid()) @db.VarChar(191)
+  recoveryCaseId      String        @db.VarChar(191)
+  agentType           String        @db.VarChar(100)
+  modelUsed           String        @default("Deterministic-Expert-Engine-v2.6") @db.VarChar(100)
+  diagnosedCause      String        @db.Text
+  customerProfile     String?       @db.VarChar(255)
+  confidence          Float         @default(0.8)
+  recommendedAction   String        @db.VarChar(100)
+  reasoning           String        @db.Text
+  policyCheckPassed   Boolean       @default(true)
+  policyCheckDetails  String?       @db.Text
+  metadataJson        String?       @db.LongText
+  createdAt           DateTime      @default(now())
+  recoveryCase        RecoveryCase  @relation(fields: [recoveryCaseId], references: [id], onDelete: Cascade)
+
+  @@map("ai_decisions")
+}
+
+model RecoveryAction {
+  id              String           @id @default(cuid()) @db.VarChar(191)
+  recoveryCaseId  String           @db.VarChar(191)
+  actionType      String           @db.VarChar(100)
+  channel         String?          @db.VarChar(50)
+  status          String           @default("PENDING") @db.VarChar(50)
+  payloadDetails  String?          @db.Text
+  guardrailStatus String           @default("APPROVED") @db.VarChar(50)
+  guardrailReason String?          @db.Text
+  executedAt      DateTime?
+  createdAt       DateTime         @default(now())
+  recoveryCase    RecoveryCase     @relation(fields: [recoveryCaseId], references: [id], onDelete: Cascade)
+  outcomes        RecoveryOutcome[]
+
+  @@map("recovery_actions")
+}
+
+model RecoveryOutcome {
+  id                String          @id @default(cuid()) @db.VarChar(191)
+  recoveryCaseId    String          @db.VarChar(191)
+  recoveryActionId  String?         @db.VarChar(191)
+  isSuccessful      Boolean         @default(false)
+  recoveredAmount   Float           @default(0.0)
+  currency          String          @default("INR") @db.VarChar(10)
+  latencyMs         Int             @default(350)
+  baselineWouldWin  Boolean         @default(false)
+  outcomeNotes      String?         @db.Text
+  resolvedPaymentId String?         @db.VarChar(191)
+  createdAt         DateTime        @default(now())
+  recoveryCase      RecoveryCase    @relation(fields: [recoveryCaseId], references: [id], onDelete: Cascade)
+  recoveryAction    RecoveryAction? @relation(fields: [recoveryActionId], references: [id], onDelete: SetNull)
+
+  @@map("recovery_outcomes")
+}
+
+model Experiment {
+  id                   String             @id @default(cuid()) @db.VarChar(191)
+  workspaceId          String             @db.VarChar(191)
+  name                 String             @db.VarChar(255)
+  description          String?            @db.Text
+  sampleSize           Int                @default(500)
+  status               String             @default("COMPLETED") @db.VarChar(50)
+  baselineStrategy     String             @default("NAIVE_IMMEDIATE_RETRY") @db.VarChar(100)
+  aiStrategy           String             @default("AUTONOMOUS_MULTI_AGENT_RECOVERY") @db.VarChar(100)
+  totalVolumeAtRisk    Float              @default(0.0)
+  baselineRecovered    Float              @default(0.0)
+  aiRecovered          Float              @default(0.0)
+  incrementalLift      Float              @default(0.0)
+  baselineRecoveryRate Float              @default(0.0)
+  aiRecoveryRate       Float              @default(0.0)
+  avgRecoveryTimeSecs  Float              @default(0.0)
+  customerFrictionDrop Float              @default(0.0)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  workspace            Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  results              ExperimentResult[]
+
+  @@map("experiments")
+}
+
+model ExperimentResult {
+  id                String     @id @default(cuid()) @db.VarChar(191)
+  experimentId      String     @db.VarChar(191)
+  transactionId     String     @db.VarChar(191)
+  amount            Float
+  failureCategory   String     @db.VarChar(100)
+  baselineAction    String     @db.VarChar(100)
+  baselineRecovered Boolean    @default(false)
+  aiAction          String     @db.VarChar(100)
+  aiRecovered       Boolean    @default(false)
+  incrementalWin    Boolean    @default(false)
+  aiReasoning       String     @db.Text
+  experiment        Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+
+  @@map("experiment_results")
+}
+
+model AuditLog {
+  id            String       @id @default(cuid()) @db.VarChar(191)
+  workspaceId   String       @db.VarChar(191)
+  userId        String?      @db.VarChar(191)
+  transactionId String?      @db.VarChar(191)
+  actor         String       @default("SYSTEM_AI") @db.VarChar(100)
+  action        String       @db.VarChar(100)
+  entityType    String       @db.VarChar(100)
+  entityId      String?      @db.VarChar(191)
+  details       String       @db.Text
+  payloadJson   String?      @db.LongText
+  timestamp     DateTime     @default(now())
+  workspace     Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user          User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  transaction   Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, timestamp])
+  @@map("audit_logs")
+}
+
+model WebhookEvent {
+  id          String    @id @default(cuid()) @db.VarChar(191)
+  workspaceId String    @db.VarChar(191)
+  source      String    @default("RAZORPAY") @db.VarChar(50)
+  eventType   String    @db.VarChar(100)
+  payloadJson String    @db.LongText
+  signature   String?   @db.VarChar(512)
+  processed   Boolean   @default(false)
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("webhook_events")
+}
+
+model ApiKey {
+  id          String    @id @default(cuid()) @db.VarChar(191)
+  workspaceId String    @db.VarChar(191)
+  name        String    @db.VarChar(255)
+  keyHash     String    @unique @db.VarChar(255)
+  keyPrefix   String    @db.VarChar(50)
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("api_keys")
+}
+
+model WorkspaceSettings {
+  id                   String    @id @default(cuid()) @db.VarChar(191)
+  workspaceId          String    @unique @db.VarChar(191)
+  maxRetries           Int       @default(3)
+  quietHoursStart      Int       @default(22) // 10 PM
+  quietHoursEnd        Int       @default(8)  // 8 AM
+  minRecoveryProbFloor Float     @default(0.35)
+  humanReviewThreshold Float     @default(50000)
+  aiProvider           String    @default("DETERMINISTIC_EXPERT") @db.VarChar(100)
+  aiApiKey             String?   @db.VarChar(512)
+  razorpayKeyId        String?   @db.VarChar(191)
+  razorpayKeySecret    String?   @db.VarChar(191)
+  webhookSecret        String?   @db.VarChar(191)
+  enableAutoRecovery   Boolean   @default(true)
+  workspace            Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@map("workspace_settings")
+}

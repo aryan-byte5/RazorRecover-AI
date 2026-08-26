@@ -1,0 +1,49 @@
+{
+  "name": "razor-recover-ai",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "node scripts/prepare-prisma.js && prisma generate && next build",
+    "start": "next start",
+    "lint": "next lint",
+    "prisma:generate": "node scripts/prepare-prisma.js && prisma generate",
+    "prisma:push": "node scripts/prepare-prisma.js && prisma db push",
+    "prisma:seed": "tsx prisma/seed.ts",
+    "db:seed": "node scripts/prepare-prisma.js && prisma db push && tsx prisma/seed.ts",
+    "setup:mysql": "node scripts/setup-mysql.js",
+    "test": "tsx --test tests/agents.test.ts tests/simulation.test.ts tests/api.test.ts tests/persistence.test.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.18.0",
+    "bcryptjs": "^2.4.3",
+    "canvas-confetti": "^1.9.3",
+    "clsx": "^2.1.1",
+    "date-fns": "^3.6.0",
+    "framer-motion": "^11.3.28",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.428.0",
+    "next": "14.2.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.12.7",
+    "tailwind-merge": "^2.5.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/canvas-confetti": "^1.9.0",
+    "@types/jsonwebtoken": "^9.0.6",
+    "@types/node": "^20.14.14",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "14.2.5",
+    "postcss": "^8.4.41",
+    "prisma": "^5.18.0",
+    "tailwindcss": "^3.4.9",
+    "tsx": "^4.16.5",
+    "typescript": "^5.5.4"
+  }
+}

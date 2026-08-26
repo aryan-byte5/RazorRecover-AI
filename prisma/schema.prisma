@@ -1,0 +1,302 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String       @id @default(cuid())
+  email         String       @unique
+  name          String
+  passwordHash  String
+  avatarUrl     String?
+  role          String       @default("ADMIN") // ADMIN, MEMBER, VIEWER
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  memberships   Membership[]
+  auditLogs     AuditLog[]
+}
+
+model Workspace {
+  id            String             @id @default(cuid())
+  name          String
+  slug          String             @unique
+  currency      String             @default("INR")
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  memberships   Membership[]
+  customers     Customer[]
+  transactions  Transaction[]
+  recoveryCases RecoveryCase[]
+  experiments   Experiment[]
+  auditLogs     AuditLog[]
+  webhookEvents WebhookEvent[]
+  apiKeys       ApiKey[]
+  settings      WorkspaceSettings?
+}
+
+model Membership {
+  id          String    @id @default(cuid())
+  userId      String
+  workspaceId String
+  role        String    @default("ADMIN")
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+
+  @@unique([userId, workspaceId])
+}
+
+model Customer {
+  id              String          @id @default(cuid())
+  workspaceId     String
+  externalId      String?
+  name            String
+  email           String
+  phone           String?
+  riskProfile     String          @default("LOW") // LOW, MEDIUM, HIGH, VIP
+  lifetimeValue   Float           @default(0)
+  totalPayments   Int             @default(0)
+  successCount    Int             @default(0)
+  failureCount    Int             @default(0)
+  preferredMethod String?         // UPI, CARD, NETBANKING
+  preferredVpa    String?
+  contactConsent  Boolean         @default(true)
+  lastContactedAt DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  transactions    Transaction[]
+  paymentMethods  PaymentMethod[]
+  recoveryCases   RecoveryCase[]
+
+  @@index([workspaceId, email])
+}
+
+model PaymentMethod {
+  id          String   @id @default(cuid())
+  customerId  String
+  type        String   // UPI, CARD, NETBANKING, WALLET
+  network     String?  // VISA, MASTERCARD, RUPAY
+  last4       String?
+  issuerBank  String?  // HDFC, SBI, ICICI, AXIS
+  vpaHandle   String?  // @okhdfcbank, @paytm, @okaxis
+  isDefault   Boolean  @default(false)
+  successRate Float    @default(0.85)
+  createdAt   DateTime @default(now())
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+model Transaction {
+  id               String         @id @default(cuid())
+  workspaceId      String
+  customerId       String
+  externalId       String?        // e.g. pay_N9s87f6asdf
+  orderId          String?        // e.g. order_982347sd
+  amount           Float
+  currency         String         @default("INR")
+  status           String         // SUCCESS, FAILED, PENDING, RECOVERED
+  paymentMethod    String         // UPI, CARD, NETBANKING
+  vpa              String?
+  cardNetwork      String?
+  cardLast4        String?
+  bankCode         String?
+  errorCode        String?        // BAD_REQUEST_ERROR, GATEWAY_TIMEOUT, INSUFFICIENT_FUNDS, etc.
+  errorDescription String?
+  failureCategory  String?        // TRANSIENT_NETWORK, INSUFFICIENT_FUNDS, AUTHENTICATION, ISSUER_DOWNTIME, FRAUD, EXPIRED_CARD
+  retryCount       Int            @default(0)
+  recoveryStatus   String         @default("NONE") // NONE, QUEUED, IN_PROGRESS, RECOVERED, UNRECOVERABLE
+  recoveredAt      DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  workspace        Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer         Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  recoveryCases    RecoveryCase[]
+  auditLogs        AuditLog[]
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, recoveryStatus])
+}
+
+model RecoveryCase {
+  id                  String           @id @default(cuid())
+  workspaceId         String
+  transactionId       String
+  customerId          String
+  status              String           @default("QUEUED") // QUEUED, DIAGNOSED, ACTION_PENDING, IN_PROGRESS, RECOVERED, FAILED, ESCALATED, DISMISSED
+  priority            String           @default("MEDIUM") // LOW, MEDIUM, HIGH, CRITICAL
+  riskScore           Float            @default(0.2)
+  recoveryProbability Float            @default(0.5)
+  expectedRecovery    Float            @default(0.0)
+  failureRootCause    String?
+  assignedStrategy    String?          // SMART_RETRY, METHOD_SWITCH, PAYMENT_LINK, PERSONALIZED_REMINDER, DELAYED_RETRY, ESCALATE, NO_ACTION
+  maxAttempts         Int              @default(3)
+  attemptCount        Int              @default(0)
+  lastAttemptAt       DateTime?
+  resolvedAt          DateTime?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  workspace           Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  transaction         Transaction      @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  customer            Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  aiDecisions         AIDecision[]
+  actions             RecoveryAction[]
+  outcomes            RecoveryOutcome[]
+
+  @@index([workspaceId, status])
+}
+
+model AIDecision {
+  id                  String        @id @default(cuid())
+  recoveryCaseId      String
+  agentType           String        // DIAGNOSIS, CONTEXT, STRATEGY, GUARDRAIL
+  modelUsed           String        @default("Deterministic-Expert-Engine-v2.6") // or gemini-1.5-flash / gpt-4o
+  diagnosedCause      String
+  customerProfile     String?
+  confidence          Float         @default(0.8)
+  recommendedAction   String
+  reasoning           String
+  policyCheckPassed   Boolean       @default(true)
+  policyCheckDetails  String?
+  metadataJson        String?
+  createdAt           DateTime      @default(now())
+  recoveryCase        RecoveryCase  @relation(fields: [recoveryCaseId], references: [id], onDelete: Cascade)
+}
+
+model RecoveryAction {
+  id              String           @id @default(cuid())
+  recoveryCaseId  String
+  actionType      String           // SMART_RETRY, PAYMENT_LINK, METHOD_RECOMMENDATION, PERSONALIZED_REMINDER, DELAYED_RETRY, ESCALATION, NO_ACTION
+  channel         String?          // API, WHATSAPP, SMS, EMAIL, IN_APP
+  status          String           @default("PENDING") // PENDING, EXECUTING, COMPLETED, FAILED, BLOCKED_BY_GUARDRAIL
+  payloadDetails  String?
+  guardrailStatus String           @default("APPROVED") // APPROVED, REJECTED, OVERRIDDEN
+  guardrailReason String?
+  executedAt      DateTime?
+  createdAt       DateTime         @default(now())
+  recoveryCase    RecoveryCase     @relation(fields: [recoveryCaseId], references: [id], onDelete: Cascade)
+  outcomes        RecoveryOutcome[]
+}
+
+model RecoveryOutcome {
+  id                String          @id @default(cuid())
+  recoveryCaseId    String
+  recoveryActionId  String?
+  isSuccessful      Boolean         @default(false)
+  recoveredAmount   Float           @default(0.0)
+  currency          String          @default("INR")
+  latencyMs         Int             @default(350)
+  baselineWouldWin  Boolean         @default(false)
+  outcomeNotes      String?
+  resolvedPaymentId String?
+  createdAt         DateTime        @default(now())
+  recoveryCase      RecoveryCase    @relation(fields: [recoveryCaseId], references: [id], onDelete: Cascade)
+  recoveryAction    RecoveryAction? @relation(fields: [recoveryActionId], references: [id], onDelete: SetNull)
+}
+
+model Experiment {
+  id                   String             @id @default(cuid())
+  workspaceId          String
+  name                 String
+  description          String?
+  sampleSize           Int                @default(500)
+  status               String             @default("COMPLETED") // RUNNING, COMPLETED, CANCELLED
+  baselineStrategy     String             @default("NAIVE_IMMEDIATE_RETRY")
+  aiStrategy           String             @default("AUTONOMOUS_MULTI_AGENT_RECOVERY")
+  totalVolumeAtRisk    Float              @default(0.0)
+  baselineRecovered    Float              @default(0.0)
+  aiRecovered          Float              @default(0.0)
+  incrementalLift      Float              @default(0.0)
+  baselineRecoveryRate Float              @default(0.0)
+  aiRecoveryRate       Float              @default(0.0)
+  avgRecoveryTimeSecs  Float              @default(0.0)
+  customerFrictionDrop Float              @default(0.0)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  workspace            Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  results              ExperimentResult[]
+}
+
+model ExperimentResult {
+  id                String     @id @default(cuid())
+  experimentId      String
+  transactionId     String
+  amount            Float
+  failureCategory   String
+  baselineAction    String
+  baselineRecovered Boolean    @default(false)
+  aiAction          String
+  aiRecovered       Boolean    @default(false)
+  incrementalWin    Boolean    @default(false)
+  aiReasoning       String
+  experiment        Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id            String       @id @default(cuid())
+  workspaceId   String
+  userId        String?
+  transactionId String?
+  actor         String       @default("SYSTEM_AI") // SYSTEM_AI, USER, WEBHOOK, GUARDRAIL
+  action        String       // PAYMENT_FAILED, AI_DIAGNOSED, STRATEGY_CHOSEN, GUARDRAIL_CHECK, ACTION_EXECUTED, OUTCOME_RECORDED
+  entityType    String       // TRANSACTION, RECOVERY_CASE, WORKSPACE_SETTINGS, SIMULATION
+  entityId      String
+  details       String
+  payloadJson   String?
+  ipAddress     String?
+  createdAt     DateTime     @default(now())
+  workspace     Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user          User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  transaction   Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, action])
+  @@index([workspaceId, createdAt])
+}
+
+model WebhookEvent {
+  id             String    @id @default(cuid())
+  workspaceId    String
+  provider       String    @default("RAZORPAY")
+  eventType      String    // payment.failed, payment.authorized, order.paid
+  idempotencyKey String    @unique
+  payload        String
+  status         String    @default("PROCESSED") // PENDING, PROCESSED, FAILED
+  errorMessage   String?
+  createdAt      DateTime  @default(now())
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model ApiKey {
+  id          String    @id @default(cuid())
+  workspaceId String
+  name        String
+  keyPrefix   String
+  keyHash     String
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model WorkspaceSettings {
+  id                     String    @id @default(cuid())
+  workspaceId            String    @unique
+  maxRetries             Int       @default(3)
+  cooldownHours          Int       @default(2)
+  minRecoveryProbability Float     @default(0.35)
+  enableWhatsAppReminders Boolean   @default(true)
+  enableSmsReminders     Boolean   @default(true)
+  enableSmartSwitch      Boolean   @default(true)
+  enableAutoLinks        Boolean   @default(true)
+  quietHoursStart        Int       @default(22) // 10 PM
+  quietHoursEnd          Int       @default(8)  // 8 AM
+  humanReviewThreshold   Float     @default(50000.0) // INR 50k+ requires human signoff
+  aiProvider             String    @default("DETERMINISTIC_EXPERT") // DETERMINISTIC_EXPERT, GEMINI, OPENAI
+  geminiApiKey           String?
+  openaiApiKey           String?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  workspace              Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}

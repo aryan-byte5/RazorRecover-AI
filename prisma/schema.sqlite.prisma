@@ -1,0 +1,291 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String       @id @default(cuid())
+  email         String       @unique
+  name          String
+  passwordHash  String
+  avatarUrl     String?
+  role          String       @default("ADMIN") // ADMIN, MEMBER, VIEWER
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  memberships   Membership[]
+  auditLogs     AuditLog[]
+}
+
+model Workspace {
+  id            String             @id @default(cuid())
+  name          String
+  slug          String             @unique
+  currency      String             @default("INR")
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  memberships   Membership[]
+  customers     Customer[]
+  transactions  Transaction[]
+  recoveryCases RecoveryCase[]
+  experiments   Experiment[]
+  auditLogs     AuditLog[]
+  webhookEvents WebhookEvent[]
+  apiKeys       ApiKey[]
+  settings      WorkspaceSettings?
+}
+
+model Membership {
+  id          String    @id @default(cuid())
+  userId      String
+  workspaceId String
+  role        String    @default("ADMIN")
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+
+  @@unique([userId, workspaceId])
+}
+
+model Customer {
+  id              String          @id @default(cuid())
+  workspaceId     String
+  externalId      String?
+  name            String
+  email           String
+  phone           String?
+  riskProfile     String          @default("LOW") // LOW, MEDIUM, HIGH, VIP
+  lifetimeValue   Float           @default(0.0)
+  totalTransactions Int           @default(0)
+  failedTransactions Int          @default(0)
+  recoveredCount  Int             @default(0)
+  preferredChannel String         @default("WHATSAPP") // WHATSAPP, SMS, EMAIL, IN_APP
+  preferredMethod String          @default("UPI")
+  preferredVpa    String?
+  contactFatigueCount Int         @default(0)
+  lastContactedAt DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  workspace       Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  transactions    Transaction[]
+  recoveryCases   RecoveryCase[]
+
+  @@index([workspaceId, email])
+}
+
+model Transaction {
+  id              String        @id @default(cuid())
+  workspaceId     String
+  customerId      String?
+  amount          Float
+  currency        String        @default("INR")
+  status          String        @default("FAILED") // PENDING, SUCCESS, FAILED, RECOVERED
+  paymentMethod   String        // UPI, CARD, NETBANKING, WALLET
+  issuerBank      String?       // HDFC, ICICI, SBI, AXIS, etc.
+  vpaHandle       String?       // customer@okhdfcbank
+  cardLast4       String?
+  errorCode       String?       // GATEWAY_TIMEOUT, INSUFFICIENT_FUNDS, etc.
+  errorDescription String?
+  failureCategory String?       // TRANSIENT_NETWORK, INSUFFICIENT_FUNDS, etc.
+  recoveryStatus  String        @default("NONE") // NONE, QUEUED, IN_PROGRESS, RECOVERED, FAILED, ESCALATED, DISMISSED
+  retryCount      Int           @default(0)
+  recoveredAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  workspace       Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer        Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  recoveryCase    RecoveryCase?
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, recoveryStatus])
+}
+
+model RecoveryCase {
+  id              String           @id @default(cuid())
+  workspaceId     String
+  transactionId   String           @unique
+  customerId      String?
+  status          String           @default("DETECTED") // DETECTED, DIAGNOSED, ACTION_PENDING, EXECUTING, RECOVERED, FAILED, ESCALATED, DISMISSED
+  priority        String           @default("MEDIUM") // LOW, MEDIUM, HIGH, CRITICAL
+  riskScore       Float            @default(0.5) // 0.0 to 1.0
+  recoveryStrategy String?         // SMART_RETRY, METHOD_RECOMMENDATION, PAYMENT_LINK, PERSONALIZED_REMINDER, DELAYED_RETRY, ESCALATE, NO_ACTION
+  recommendedChannel String?       // API, WHATSAPP, SMS, EMAIL, IN_APP, MANUAL_OPS
+  recoveryProbability Float?
+  expectedValueINR Float?
+  interventionCost Float           @default(0.0)
+  escalationReason String?
+  assignedTo      String?
+  expiresAt       DateTime?
+  resolvedAt      DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  workspace       Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  transaction     Transaction      @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  customer        Customer?        @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  aiDecisions     AIDecision[]
+  actions         RecoveryAction[]
+  outcome         RecoveryOutcome?
+
+  @@index([workspaceId, status])
+}
+
+model AIDecision {
+  id                 String       @id @default(cuid())
+  recoveryCaseId     String
+  agentName          String       // DIAGNOSIS_AGENT, CUSTOMER_CONTEXT_AGENT, STRATEGY_AGENT, GUARDRAIL_AGENT
+  agentModel         String       @default("DETERMINISTIC_EXPERT")
+  inputSummary       String
+  decisionOutput     String
+  confidenceScore    Float        @default(1.0)
+  reasoning          String?
+  ruleEvaluations    String?
+  isExplainable      Boolean      @default(true)
+  executionLatencyMs Int          @default(0)
+  createdAt          DateTime     @default(now())
+  recoveryCase       RecoveryCase @relation(fields: [recoveryCaseId], references: [id], onDelete: Cascade)
+
+  @@index([recoveryCaseId, agentName])
+}
+
+model RecoveryAction {
+  id                 String       @id @default(cuid())
+  recoveryCaseId     String
+  actionType         String       // SMART_RETRY, PAYMENT_LINK, WHATSAPP_REMINDER, etc.
+  channel            String       // API, WHATSAPP, SMS, EMAIL, IN_APP
+  status             String       @default("PENDING") // PENDING, EXECUTING, COMPLETED, FAILED, CANCELLED
+  payload            String?
+  gatewayResponse    String?
+  targetDestination  String?
+  scheduledFor       DateTime?
+  executedAt         DateTime?
+  createdAt          DateTime     @default(now())
+  recoveryCase       RecoveryCase @relation(fields: [recoveryCaseId], references: [id], onDelete: Cascade)
+
+  @@index([recoveryCaseId, status])
+}
+
+model RecoveryOutcome {
+  id                 String       @id @default(cuid())
+  recoveryCaseId     String       @unique
+  isSuccessful       Boolean      @default(false)
+  recoveredAmount    Float        @default(0.0)
+  currency           String       @default("INR")
+  timeToRecoverSecs  Int?
+  baselineWouldRecover Boolean    @default(false)
+  incrementalLiftINR Float        @default(0.0)
+  customerFrictionScore Int       @default(1)
+  finalStatus        String       @default("COMPLETED")
+  verifiedAt         DateTime     @default(now())
+  recoveryCase       RecoveryCase @relation(fields: [recoveryCaseId], references: [id], onDelete: Cascade)
+}
+
+model Experiment {
+  id                 String             @id @default(cuid())
+  workspaceId        String
+  name               String
+  description        String?
+  sampleSize         Int                @default(500)
+  baselineStrategy   String             @default("NAIVE_RETRY")
+  treatmentStrategy  String             @default("MULTI_AGENT_AI")
+  totalAtRiskINR     Float              @default(0.0)
+  baselineRecoveredINR Float            @default(0.0)
+  aiRecoveredINR     Float              @default(0.0)
+  incrementalLiftINR Float              @default(0.0)
+  baselineRecoveryRate Float            @default(0.0)
+  aiRecoveryRate     Float              @default(0.0)
+  frictionDropPct    Float              @default(0.0)
+  status             String             @default("COMPLETED")
+  runByUserId        String?
+  startedAt          DateTime           @default(now())
+  completedAt        DateTime?
+  workspace          Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  results            ExperimentResult[]
+
+  @@index([workspaceId])
+}
+
+model ExperimentResult {
+  id                 String     @id @default(cuid())
+  experimentId       String
+  transactionId      String
+  amount             Float
+  failureCategory    String
+  baselineAction     String
+  baselineRecovered  Boolean
+  aiAction           String
+  aiRecovered        Boolean
+  incrementalWin     Boolean
+  aiReasoning        String?
+  experiment         Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+
+  @@index([experimentId])
+}
+
+model AuditLog {
+  id           String     @id @default(cuid())
+  workspaceId  String
+  userId       String?
+  action       String     // PAYMENT_FAILED, AI_DIAGNOSED, STRATEGY_SELECTED, GUARDRAIL_BLOCKED, ACTION_EXECUTED, OUTCOME_VERIFIED
+  entityType   String     // TRANSACTION, RECOVERY_CASE, WORKSPACE_SETTINGS, CUSTOMER
+  entityId     String
+  actor        String     @default("SYSTEM_AI") // SYSTEM_AI, USER, CRON_JOB
+  description  String
+  diffPayload  String?
+  ipAddress    String?
+  createdAt    DateTime   @default(now())
+  workspace    Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user         User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+  @@index([entityType, entityId])
+}
+
+model WebhookEvent {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  source       String    @default("RAZORPAY")
+  eventType    String    // payment.failed, payment.captured, etc.
+  eventPayload String
+  processed    Boolean   @default(false)
+  error        String?
+  receivedAt   DateTime  @default(now())
+  processedAt  DateTime?
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, processed])
+}
+
+model ApiKey {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  name         String
+  keyPrefix    String
+  hashedSecret String
+  lastUsedAt   DateTime?
+  expiresAt    DateTime?
+  createdAt    DateTime  @default(now())
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+model WorkspaceSettings {
+  id                      String    @id @default(cuid())
+  workspaceId             String    @unique
+  maxRetries              Int       @default(3)
+  cooldownHours           Int       @default(2)
+  minRecoveryProbability  Float     @default(0.35)
+  enableWhatsAppReminders Boolean   @default(true)
+  enableSmsReminders      Boolean   @default(true)
+  enableSmartSwitch       Boolean   @default(true)
+  enableAutoLinks         Boolean   @default(true)
+  quietHoursStart         Int       @default(22) // 10 PM
+  quietHoursEnd           Int       @default(8)  // 8 AM
+  humanReviewThreshold    Float     @default(50000.0) // INR 50,000+
+  aiProvider              String    @default("DETERMINISTIC_EXPERT")
+  updatedAt               DateTime  @updatedAt
+  workspace               Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
